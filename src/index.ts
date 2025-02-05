@@ -397,14 +397,16 @@ function parse_source_positions(str: string): Digitaljs.SourcePosition[] {
 }
 
 function yosys_to_digitaljs(data: Yosys.Output, portmaps: Portmaps, options: ConvertOptions = {}): {[key: string]: Digitaljs.Module} {
+    const subcircuits = Object.keys(data.modules);
+
     const out = {};
     for (const [name, mod] of Object.entries(data.modules)) {
-        out[name] = yosys_to_digitaljs_mod(name, mod, portmaps, options);
+        out[name] = yosys_to_digitaljs_mod(name, mod, portmaps, subcircuits, options);
     }
     return out
 }
 
-function yosys_to_digitaljs_mod(name: string, mod: Yosys.Module, portmaps: Portmaps, options: ConvertOptions = {}): Digitaljs.Module {
+function yosys_to_digitaljs_mod(name: string, mod: Yosys.Module, portmaps: Portmaps, subcircuits: string[], options: ConvertOptions = {}): Digitaljs.Module {
     function constbit(bit: Bit) {
         return (Yosys.ConstChars as readonly string[]).includes(bit.toString());
     }
@@ -484,7 +486,22 @@ function yosys_to_digitaljs_mod(name: string, mod: Yosys.Module, portmaps: Portm
                     add_net_source(pconn, dname, portmap[pname], true);
                     break;
                 default:
-                    throw Error('Invalid port direction: ' + pdir);
+                    console.warn(`Invalid port direction for ${dname}: ${pdir}`);
+            }
+        }
+    }
+    function connect_generic(dname: string, cell: Yosys.Cell) {
+        for (const [pname, pdir] of Object.entries(cell.port_directions)) {
+            const pconn = cell.connections[pname];
+            switch (pdir) {
+                case 'input':
+                    add_net_target(pconn, dname, pname);
+                    break;
+                case 'output':
+                    add_net_source(pconn, dname, pname, true);
+                    break;
+                default:
+                    console.warn(`Invalid port direction for ${dname}: ${pdir}`);
             }
         }
     }
@@ -568,7 +585,8 @@ function yosys_to_digitaljs_mod(name: string, mod: Yosys.Module, portmaps: Portm
             case 'output':
                 add_net_target(port.bits, dname, 'in');
                 break;
-            default: throw Error('Invalid port direction: ' + port.direction);
+            default:
+                console.warn(`Invalid port direction for ${dname}: ${port.direction}`);
         }
     }
     // Add gates
@@ -577,8 +595,11 @@ function yosys_to_digitaljs_mod(name: string, mod: Yosys.Module, portmaps: Portm
             label: cname,
             type: gate_subst.get(cell.type)
         };
-        if (dev.type == undefined) {
+        if (dev.type === undefined && subcircuits.includes(cell.type)) {
             dev.type = 'Subcircuit';
+            dev.celltype = cell.type;
+        } else if (dev.type == undefined) {
+            dev.type = 'Generic';
             dev.celltype = cell.type;
         }
         if (typeof cell.attributes == 'object' && cell.attributes.src) {
@@ -1064,11 +1085,12 @@ function yosys_to_digitaljs_mod(name: string, mod: Yosys.Module, portmaps: Portm
         }
         const portmap = portmaps[cell.type];
         if (portmap) connect_device(dname, cell, portmap);
+        else if (dev.type == 'Generic') connect_generic(dname, cell);
         else if (cell.type == '$pmux') connect_pmux(dname, cell);
         else if (cell.type == '$mem') connect_mem(dname, cell, dev);
         else if (cell.type == '$mem_v2') connect_mem(dname, cell, dev);
         else if (cell.type == '$lut') connect_mem(dname, cell, dev);
-        else throw Error('Invalid cell type: ' + cell.type);
+        else console.warn('Invalid cell type: ' + JSON.stringify(cell));
     }
     // Group bits into nets for complex sources
     for (const [nbits, net] of nets.entries()) {
