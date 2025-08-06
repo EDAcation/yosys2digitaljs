@@ -438,7 +438,7 @@ function yosys_to_digitaljs_mod(name: string, mod: Yosys.Module, portmaps: Portm
         const net = get_net(k);
         if(net.source !== undefined) {
             // multiple sources driving one net, disallowed in digitaljs
-            throw Error('Multiple sources driving net: ' + net.name);
+            console.warn('Multiple sources driving net: ' + JSON.stringify(net));
         }
         net.source = { id: d, port: p };
         if (primary) for (const [nbit, bit] of k.entries()) {
